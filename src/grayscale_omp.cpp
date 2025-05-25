@@ -4,7 +4,8 @@
 #include <fstream>
 
 int main() {
-    cv::Mat image = cv::imread("data/2.png", cv::IMREAD_COLOR);
+    cv::Mat image = cv::imread("../data/2.png", cv::IMREAD_COLOR);
+
     if (image.empty()) {
         std::cerr << "Could not open image.\n";
         return 1;

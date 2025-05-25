@@ -14,7 +14,8 @@ int main(int argc, char** argv) {
     cv::Mat image;
     int rows = 0, cols = 0;
     if (rank == 0) {
-        image = cv::imread("data/2.png", cv::IMREAD_COLOR);
+        image = cv::imread("../data/2.png", cv::IMREAD_COLOR);
+
         if (image.empty()) {
             std::cerr << "Could not open image.\n";
             MPI_Abort(MPI_COMM_WORLD, 1);
