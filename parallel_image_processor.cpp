@@ -9,6 +9,10 @@
 #include <mpi.h>
 
 // Simple image structure
+/*
+we crate some sintetic 2D image witcfh can get values of 0-255 for gray with the width and height 
+
+*/
 struct Image {
     std::vector<std::vector<int>> data;
     int width, height;
@@ -19,6 +23,10 @@ struct Image {
 };
 
 // Utility functions
+/*
+this function generates a random image
+the srand functin sets the seed for consistente
+*/
 void generateTestImage(Image& img, int seed = 42) {
     srand(seed);
     for (int i = 0; i < img.height; i++) {
@@ -28,6 +36,9 @@ void generateTestImage(Image& img, int seed = 42) {
     }
 }
 
+/*
+function that save the image in PGM format (ASCII )
+*/
 void saveImage(const Image& img, const std::string& filename) {
     std::ofstream file(filename);
     file << "P2\n" << img.width << " " << img.height << "\n255\n";
@@ -44,6 +55,13 @@ void saveImage(const Image& img, const std::string& filename) {
 // ================================
 
 // 1. Gaussian Blur (computationally intensive)
+/*
+the following sequence is for the gausian blur 
+Applies a Gaussian blur (smoothing filter).
+Builds a Gaussian kernel (2D matrix) using the given sigma.
+Convolves it with the image (nested loop over kernel for each pixel).
+Returns a new, blurred image.
+*/
 Image gaussianBlurSequential(const Image& input, int kernelSize = 5, double sigma = 1.0) {
     Image output(input.width, input.height);
     
@@ -85,7 +103,12 @@ Image gaussianBlurSequential(const Image& input, int kernelSize = 5, double sigm
     
     return output;
 }
-
+/*
+Implements the Sobel operator for edge detection.
+Uses sobelX and sobelY kernels.
+Computes gradient magnitude
+Output highlights image edges.
+*/
 // 2. Edge Detection (Sobel operator)
 Image edgeDetectionSequential(const Image& input) {
     Image output(input.width, input.height);
@@ -150,6 +173,16 @@ Image histogramEqualizationSequential(const Image& input) {
     return output;
 }
 
+
+/*
+Finds an optimal threshold to binarize the image.
+
+Uses Otsu’s method to maximize the "between-class variance".
+
+Iterates over all thresholds from 0 to 255.
+
+Pixels above the threshold become 255 (white); below become 0 (black).
+*/
 // 4. Otsu Thresholding (finds optimal threshold for binarization)
 Image otsuThresholdingSequential(const Image& input) {
     Image output(input.width, input.height);
@@ -433,6 +466,204 @@ Image otsuThresholdingOpenMP(const Image& input) {
 // ================================
 // MPI PARALLEL ALGORITHMS (FIXED TIMING)
 // ================================
+// MPI Histogram Equalization
+Image histogramEqualizationMPI(const Image& input) {
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    
+    Image output(input.width, input.height);
+    
+    // Divide histogram calculation among processes
+    int pixelsPerProcess = (input.height * input.width) / size;
+    int extraPixels = (input.height * input.width) % size;
+    
+    int startPixel = rank * pixelsPerProcess + std::min(rank, extraPixels);
+    int endPixel = startPixel + pixelsPerProcess + (rank < extraPixels ? 1 : 0);
+    
+    // Calculate local histogram
+    std::vector<int> localHistogram(256, 0);
+    
+    for (int pixel = startPixel; pixel < endPixel; pixel++) {
+        int i = pixel / input.width;
+        int j = pixel % input.width;
+        localHistogram[input.data[i][j]]++;
+    }
+    
+    // Reduce histograms to get global histogram
+    std::vector<int> globalHistogram(256, 0);
+    MPI_Allreduce(localHistogram.data(), globalHistogram.data(), 256, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    
+    // Calculate CDF (all processes do this - it's fast)
+    std::vector<int> cdf(256, 0);
+    cdf[0] = globalHistogram[0];
+    for (int i = 1; i < 256; i++) {
+        cdf[i] = cdf[i-1] + globalHistogram[i];
+    }
+    
+    // Normalize CDF
+    int totalPixels = input.width * input.height;
+    std::vector<int> equalizedValues(256);
+    for (int i = 0; i < 256; i++) {
+        equalizedValues[i] = static_cast<int>((cdf[i] * 255.0) / totalPixels);
+    }
+    
+    // Apply equalization in parallel (each process handles its pixel range)
+    for (int pixel = startPixel; pixel < endPixel; pixel++) {
+        int i = pixel / input.width;
+        int j = pixel % input.width;
+        output.data[i][j] = equalizedValues[input.data[i][j]];
+    }
+    
+    // Gather results
+    if (rank == 0) {
+        for (int p = 1; p < size; p++) {
+            int pPixelsPerProcess = (input.height * input.width) / size;
+            int pExtraPixels = (input.height * input.width) % size;
+            int pStartPixel = p * pPixelsPerProcess + std::min(p, pExtraPixels);
+            int pEndPixel = pStartPixel + pPixelsPerProcess + (p < pExtraPixels ? 1 : 0);
+            
+            for (int pixel = pStartPixel; pixel < pEndPixel; pixel++) {
+                int i = pixel / input.width;
+                int j = pixel % input.width;
+                MPI_Recv(&output.data[i][j], 1, MPI_INT, p, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+        }
+    } else {
+        for (int pixel = startPixel; pixel < endPixel; pixel++) {
+            int i = pixel / input.width;
+            int j = pixel % input.width;
+            MPI_Send(&output.data[i][j], 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+        }
+    }
+    
+    return output;
+}
+
+// MPI Otsu Thresholding
+Image otsuThresholdingMPI(const Image& input) {
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    
+    Image output(input.width, input.height);
+    
+    // Divide histogram calculation among processes
+    int pixelsPerProcess = (input.height * input.width) / size;
+    int extraPixels = (input.height * input.width) % size;
+    
+    int startPixel = rank * pixelsPerProcess + std::min(rank, extraPixels);
+    int endPixel = startPixel + pixelsPerProcess + (rank < extraPixels ? 1 : 0);
+    
+    // Calculate local histogram
+    std::vector<int> localHistogram(256, 0);
+    
+    for (int pixel = startPixel; pixel < endPixel; pixel++) {
+        int i = pixel / input.width;
+        int j = pixel % input.width;
+        localHistogram[input.data[i][j]]++;
+    }
+    
+    // Reduce histograms
+    std::vector<int> globalHistogram(256, 0);
+    MPI_Allreduce(localHistogram.data(), globalHistogram.data(), 256, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    
+    int totalPixels = input.width * input.height;
+    
+    // Calculate total mean (all processes do this)
+    double totalMean = 0.0;
+    for (int i = 0; i < 256; i++) {
+        totalMean += i * globalHistogram[i];
+    }
+    totalMean /= totalPixels;
+    
+    // Divide threshold search among processes
+    int thresholdsPerProcess = 256 / size;
+    int extraThresholds = 256 % size;
+    
+    int startThreshold = rank * thresholdsPerProcess + std::min(rank, extraThresholds);
+    int endThreshold = startThreshold + thresholdsPerProcess + (rank < extraThresholds ? 1 : 0);
+    
+    // Find local optimal threshold
+    double localMaxVariance = 0.0;
+    int localOptimalThreshold = 0;
+    
+    for (int threshold = startThreshold; threshold < endThreshold; threshold++) {
+        // Calculate background weight and mean
+        int backgroundWeight = 0;
+        double backgroundMean = 0.0;
+        
+        for (int i = 0; i <= threshold; i++) {
+            backgroundWeight += globalHistogram[i];
+            backgroundMean += i * globalHistogram[i];
+        }
+        
+        if (backgroundWeight == 0) continue;
+        backgroundMean /= backgroundWeight;
+        
+        // Calculate foreground weight and mean
+        int foregroundWeight = totalPixels - backgroundWeight;
+        if (foregroundWeight == 0) continue;
+        
+        double foregroundMean = (totalMean * totalPixels - backgroundMean * backgroundWeight) / foregroundWeight;
+        
+        // Calculate between-class variance
+        double betweenClassVariance = (double)backgroundWeight * foregroundWeight * 
+                                     pow(backgroundMean - foregroundMean, 2) / (totalPixels * totalPixels);
+        
+        if (betweenClassVariance > localMaxVariance) {
+            localMaxVariance = betweenClassVariance;
+            localOptimalThreshold = threshold;
+        }
+    }
+    
+    // Find global optimal threshold
+    struct {
+        double variance;
+        int threshold;
+    } localResult = {localMaxVariance, localOptimalThreshold};
+    
+    struct {
+        double variance;
+        int threshold;
+    } globalResult;
+    
+    MPI_Allreduce(&localResult, &globalResult, 1, MPI_DOUBLE_INT, MPI_MAXLOC, MPI_COMM_WORLD);
+    
+    int optimalThreshold = globalResult.threshold;
+    
+    // Apply thresholding in parallel (each process handles its pixel range)
+    for (int pixel = startPixel; pixel < endPixel; pixel++) {
+        int i = pixel / input.width;
+        int j = pixel % input.width;
+        output.data[i][j] = (input.data[i][j] > optimalThreshold) ? 255 : 0;
+    }
+    
+    // Gather results
+    if (rank == 0) {
+        for (int p = 1; p < size; p++) {
+            int pPixelsPerProcess = (input.height * input.width) / size;
+            int pExtraPixels = (input.height * input.width) % size;
+            int pStartPixel = p * pPixelsPerProcess + std::min(p, pExtraPixels);
+            int pEndPixel = pStartPixel + pPixelsPerProcess + (p < pExtraPixels ? 1 : 0);
+            
+            for (int pixel = pStartPixel; pixel < pEndPixel; pixel++) {
+                int i = pixel / input.width;
+                int j = pixel % input.width;
+                MPI_Recv(&output.data[i][j], 1, MPI_INT, p, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+        }
+    } else {
+        for (int pixel = startPixel; pixel < endPixel; pixel++) {
+            int i = pixel / input.width;
+            int j = pixel % input.width;
+            MPI_Send(&output.data[i][j], 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+        }
+    }
+    
+    return output;
+}
+
 
 Image gaussianBlurMPI(const Image& input, int kernelSize = 5, double sigma = 1.0) {
     int rank, size;
@@ -638,15 +869,10 @@ public:
                 auto img = gaussianBlurMPI(input);
             } else if (algorithm == "edge") {
                 auto img = edgeDetectionMPI(input);
-            } else {
-                // For algorithms without MPI implementation, do simple work
-                if (rank == 0) {
-                    if (algorithm == "histogram") {
-                        auto img = histogramEqualizationSequential(input);
-                    } else if (algorithm == "otsu") {
-                        auto img = otsuThresholdingSequential(input);
-                    }
-                }
+            } else if (algorithm == "histogram") {
+                auto img = histogramEqualizationMPI(input);
+            } else if (algorithm == "otsu") {
+                auto img = otsuThresholdingMPI(input);
             }
         }
         
