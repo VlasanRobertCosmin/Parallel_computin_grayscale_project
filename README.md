@@ -12,6 +12,7 @@ This project implements three computationally intensive image processing algorit
 1. **Gaussian Blur** - Smoothing filter using convolution
 2. **Edge Detection** - Sobel operator for edge detection  
 3. **Histogram Equalization** - Contrast enhancement
+4. **Otsu Thresholding** - automatic image thresholding
 
 Each algorithm is implemented in three versions:
 - **Sequential** - Single-threaded baseline
@@ -232,43 +233,6 @@ mpirun -np 4 --bind-to core --map-by core ./parallel_image_processor
 export OMP_PLACES=cores
 export OMP_PROC_BIND=close
 ```
-
-## 📋 Grading Checklist
-
-✅ **Functional sequential algorithm** (0.50 points)
-- Three different algorithms implemented
-- Proper baseline for comparison
-
-✅ **Functional OpenMP parallel algorithm** (0.50 points)  
-- All algorithms parallelized with OpenMP
-- Proper thread management and synchronization
-
-✅ **Efficient OpenMP implementation** (0.50 points)
-- Loop optimization with collapse and scheduling
-- Minimized synchronization overhead
-- Thread-local storage for reductions
-
-✅ **Functional MPI parallel algorithm** (0.50 points)
-- Domain decomposition approach
-- Proper data distribution and collection
-
-✅ **Efficient MPI implementation** (0.50 points)
-- Load balancing for uneven distributions
-- Minimized communication overhead
-
-✅ **Speedup graphics** (0.50 points)
-- Automatic generation of comprehensive performance plots
-- OpenMP speedup graphs (0.25 points)
-- MPI speedup graphs (0.25 points)
-- Multiple visualization types and detailed analysis
-
-## 🎯 Expected Results
-
-The implementation should demonstrate:
-- **OpenMP**: 2-4x speedup depending on algorithm and image size
-- **MPI**: 1.5-3.5x speedup with good scaling characteristics  
-- **Efficiency**: >60% parallel efficiency for most cases
-- **Scalability**: Better performance on larger images
 
 ## 📝 Notes
 
